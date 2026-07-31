@@ -15,8 +15,8 @@
 | 网格对齐 | QR 标准 timing pattern | 模块级对齐 |
 | 网格尺寸 | 4 个等级：21×21 / 29×29 / 37×37 / 45×45（每级 +8 模块，不含 Quiet Zone） | 以模块数定义，与像素无关，finder 测量推算等级 |
 | 帧元信息 | Format Info (颜色档/图形档) | 等级由 finder 测量决定，Format Info 仅存颜色和图形档位 |
-| 帧类型 | frame_type 字段 (payload 内) | 由 RS 保护，区分 Header/Data 帧 |
-| 纠错 | Reed-Solomon (数据层) + LT 喷泉码 (传输层) | RS 修复单帧内误码，LT 处理丢帧 |
+| 帧格式 | 单一帧格式，无 Header/Data 区分 | total_length 每帧携带，收到任意一帧即可引导解码 |
+| 纠错与完整性 | Reed-Solomon + CRC16 (数据层) + LT 喷泉码 (传输层) | RS 修复单帧内误码，CRC16 防 RS 误纠正，LT 处理丢帧 |
 
 ---
 
@@ -24,9 +24,9 @@
 
 Cimbar 采用 3 层架构，每层向下依赖、向上提供服务，上层不感知下层细节。
 
-- **符号层**：视觉结构到符号流的映射（模块布局、颜色/图形编码、定位对齐、Format Info、符号流排列）。一帧图像 → 一段符号流
-- **数据层**：符号流与字节流的双向转换（多符号联合打包、RS 纠错）。不感知帧结构、frame_type、payload 语义
-- **传输层**：文件到帧的编码与重组（帧结构、RS 冗余策略、LT 喷泉码、payload 字段定义、帧调度、去重、解压）。原始文件 → 多个帧
+- **符号层**：视觉结构到符号块的映射（模块布局、颜色/图形编码、定位对齐、Format Info、符号块排列）。一帧图像 → 一个符号块
+- **数据层**：符号块与字节块的双向转换（多符号联合打包、RS 纠错、CRC16 完整性校验）。不感知帧结构、payload 语义
+- **传输层**：content 到帧的编码与重组（帧结构、RS 冗余策略、LT 喷泉码、去重）。content → 多个帧
 
 ---
 
@@ -124,11 +124,11 @@ Cimbar 采用 3 层架构，每层向下依赖、向上提供服务，上层不�
 
 **坐标系**：模块坐标 (col, row)，左上角为 (0, 0)，不含 Quiet Zone。
 
-### 1.7 符号流排列
+### 1.7 符号块排列
 
 - 数据区模块逐行扫描，跳过所有结构区域
 - 每个数据模块输出一个符号值
-- 全部数据区模块的符号按扫描顺序排列为一段符号流
+- 全部数据区模块的符号按扫描顺序排列为一个符号块
 
 ---
 
@@ -142,22 +142,24 @@ Cimbar 采用 3 层架构，每层向下依赖、向上提供服务，上层不�
 
 ### 2.2 容量
 
-L_max（单帧可承载的 data byte 数）是数据层的容量属性（类比 MTU），由 S、M、打包参数、RS 参数决定，给定等级和档位后为常量。传输层查表获取，据此控制 payload 长度。
+L_max（单帧可承载的 data byte 数）是数据层的容量属性（类比 MTU），由 S、M、打包参数决定，RS 参数固定。给定 S 和 M 后为常量。传输层查表获取，据此控制 payload 长度。
 
 ### 2.3 多符号联合打包
 
-符号流为 M-进制，M 通常非 2 的幂。将 k 个符号视为 base-M 大整数转为 n bytes，最大化 byte 利用率。
+M 通常非 2 的幂。将 n bytes 转为 k 个 base-M 符号（约束 M^k ≥ 256^n），提升 byte 利用率。
 
-### 2.4 Reed-Solomon 纠错
+### 2.4 Reed-Solomon 纠错 + CRC16 完整性校验
 
 RS(255, 223) on GF(256)，统一参数，数据层自包含执行。数据层根据已知 byte 长度自行分块，无需外部参数。
 
 erasure 机制：符号层输出置信度，低置信度符号标记为 erasure，RS 纠错能力翻倍。
 
+RS 解码成功后再用 CRC16（2 bytes，包含在 RS 保护范围内）多验一道，防止 RS 极小概率的误纠正。RS 失败或 CRC16 不匹配均判无效帧。
+
 ### 2.5 处理顺序
 
-- 编码方向：byte → RS 编码 → 多符号打包 → 符号流
-- 解码方向：符号流 → 多符号解包 → RS 解码 → byte
+- 编码方向：byte → 附加 CRC16 → RS 编码 → 多符号打包 → 符号块
+- 解码方向：符号块 → 多符号解包 → RS 解码 → 验证 CRC16 → byte
 
 ---
 
@@ -167,47 +169,31 @@ erasure 机制：符号层输出置信度，低置信度符号标记为 erasure�
 
 ### 3.1 帧结构
 
+只有一种帧格式，不区分 Header/Data：
+
 ```
-| frame_type (1 byte) | payload | RS 纠错码 |
+| total_length (4 bytes) | seq (4 bytes) | payload | CRC16 | RS 纠错码 |
 ```
 
-| frame_type | 帧类型 | 说明 |
-|------------|--------|------|
-| 0x00 | Header | 携带文件元信息，周期性广播 |
-| 0x01 | Data | 携带 LT 编码块 |
-
-RS 统一为 RS(255, 223)，由数据层执行。Header 高可靠靠传输层重复发送。
+RS 统一为 RS(255, 223)，CRC16 在 RS 保护范围内，均由数据层执行。`total_length`（content 总字节数）每帧都携带，接收端收到任何一帧即可引导解码，无需单独的元信息帧。
 
 ### 3.2 LT 喷泉码
 
-数据（可选 zlib 压缩）分块 → RSD 采样 degree → XOR 得到编码块 → 接收端 peeling decoder 恢复。
+content 分块 → 每帧用 (seq, total_length) 混合得到 seed，确定性地推导 degree 和 indices → XOR 得到编码块 → 接收端用相同算法重新推导出 (degree, indices) → peeling decoder 恢复。不显式传输 seed/degree/indices，帧内无变长字段。
 
-### 3.3 Payload 字段定义
+chunk_size 和 K 由 L_max、total_length 推导，不显式传输：
+```
+chunk_size = L_max − 4(total_length) − 4(seq)
+K = ceil(total_length / chunk_size)
+```
 
-#### Header payload
+### 3.3 应用层接口
 
-| 偏移 | 长度 | 字段 | 说明 |
-|------|------|------|------|
-| 0 | 1 | content_type | 'F'=文件, 'T'=文本 |
-| 1 | 4 | filesize | 原始文件大小 (big-endian) |
-| 5 | 4 | total_blocks | LT 码源块数 K |
-| 9 | 4 | chunk_size | 每块字节数 |
-| 13 | 2 | filename_len | 文件名长度 |
-| 15 | 15 | filename | UTF-8 文件名 (截断/填充 0) |
-| 30 | ... | padding | 0xFF 填充至 RS 块对齐 |
-
-#### Data payload
-
-| 偏移 | 长度 | 字段 | 说明 |
-|------|------|------|------|
-| 0 | 4 | seq | 包序号 (big-endian)，用于快速去重 |
-| 4 | 2 | degree | XOR 的源块数 |
-| 6 | 4×degree | indices | 源块索引 (每个 4 bytes big-endian) |
-| 6+4d | chunk_size | payload | XOR 后的编码块数据 |
+编码方向：应用层交付 content 及其长度 total_length，传输层原样编码，不解析内部结构。解码方向：传输层交付还原后的 content，内部结构由应用层解释。
 
 ### 3.4 帧调度
 
-循环发送：**1 Header + N Data**（N 默认 10）。Header 周期性广播，支持接收端随时加入。
+持续发送编码帧，直到接收端解码完成。无需区分 Header/Data，接收端收到第一帧即可获取 total_length 开始解码。
 
 ### 3.5 解码流程
 
@@ -219,12 +205,11 @@ RS 统一为 RS(255, 223)，由数据层执行。Header 高可靠靠传输层重
 → 读取 Format Info → 获取颜色档/图形档
 → 按等级参数采样模块
   → 解码每个数据模块 → 符号值
-→ 拼接符号流 → 多符号联合打包 → byte 流
-→ RS 解码 (纠错)
-→ 读取 frame_type → 区分 Header/Data
-→ Header: 解析元信息 → 初始化 LT decoder
-→ Data: 去重 → 送入 LT decoder
-→ K 个块恢复 → 拼接 → 截断至 filesize → 解压 → 输出
+→ 拼接符号块 → 多符号联合打包 → byte 块
+→ RS 解码 (纠错) → 验证 CRC16（失败则丢弃本帧）
+→ 解析 total_length（首帧即可获取，推导 chunk_size/K，初始化 LT decoder）
+→ 去重 → 用 (seq, total_length) 推导 seed 进而得到 (degree, indices) → 送入 LT decoder
+→ K 个块恢复 → 拼接 → 截断至 total_length → 交付应用层 content
 ```
 
 ---
