@@ -17,8 +17,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
+import numpy as np
 
-from .colors import ColorPalette
+from .colors import ColorPalette, ColorPair
 from .format_info import FormatInfo
 from .grid import Grid, ModuleType
 from .module import ModuleCategory
@@ -130,13 +131,34 @@ class SymbolDecoder:
         confidences: List[float] = []
         erasure_flags: List[bool] = []
 
-        for coord in data_coords:
-            symbol_val, conf = self._decode_data_module(
-                coord.col, coord.row, palette, symbol_space
-            )
-            symbol_block.append(symbol_val)
-            confidences.append(conf)
-            erasure_flags.append(conf < 0.5)
+        # 优先使用批量采样（向量化，快 ~2x）
+        batch_method = getattr(self.sampler, 'batch_sample_all_modules', None)
+        if batch_method is not None:
+            shape_arr, ca_arr, cb_arr, conf_arr = batch_method(data_coords)
+            for i in range(len(data_coords)):
+                i_a, i_b = int(ca_arr[i]), int(cb_arr[i])
+                if i_a == i_b:
+                    symbol_block.append(0)
+                    confidences.append(0.0)
+                    erasure_flags.append(True)
+                    continue
+                shape_idx = int(shape_arr[i])
+                # batch 已确保 ca <= cb，无需 flip
+                pair = ColorPair(i_a, i_b)
+                pair_index = palette.get_pair_index(pair)
+                symbol_val = symbol_space.encode(pair_index, shape_idx)
+                conf = float(conf_arr[i])
+                symbol_block.append(symbol_val)
+                confidences.append(conf)
+                erasure_flags.append(conf < 0.5)
+        else:
+            for coord in data_coords:
+                symbol_val, conf = self._decode_data_module(
+                    coord.col, coord.row, palette, symbol_space
+                )
+                symbol_block.append(symbol_val)
+                confidences.append(conf)
+                erasure_flags.append(conf < 0.5)
 
         return DecodedFrame(
             symbol_block=symbol_block,
@@ -199,7 +221,6 @@ class SymbolDecoder:
             shape_index = self._flip_shape(shape_index, symbol_space.n_shapes)
 
         # 查找颜色对编号
-        from .colors import ColorPair
         pair = ColorPair(i, j)
         pair_index = palette.get_pair_index(pair)
 

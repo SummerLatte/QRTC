@@ -1,8 +1,8 @@
 """
 网格与结构区域子系统。
 
-网格为正方形，4 个等级（21/29/37/45 模块边长）。
-结构区域包括：Finder Pattern、Separator、Timing Pattern、Format Info、Quiet Zone。
+网格为正方形，15 个等级（21/29/37/45/53/61/69/77/85/93/101/109/117/125/133 模块边长）。
+结构区域包括：标准 Finder Pattern（3 个）、L 型角标（1 个）、Separator（3 组）、Format Info。
 数据区模块逐行扫描，跳过所有结构区域，按扫描顺序排列为符号块。
 """
 
@@ -19,6 +19,17 @@ class GridLevel(IntEnum):
     L2 = 2
     L3 = 3
     L4 = 4
+    L5 = 5
+    L6 = 6
+    L7 = 7
+    L8 = 8
+    L9 = 9
+    L10 = 10
+    L11 = 11
+    L12 = 12
+    L13 = 13
+    L14 = 14
+    L15 = 15
 
 
 # 等级 → 边长（模块数）
@@ -27,6 +38,17 @@ GRID_SIZES: Dict[int, int] = {
     2: 29,
     3: 37,
     4: 45,
+    5: 53,
+    6: 61,
+    7: 69,
+    8: 77,
+    9: 85,
+    10: 93,
+    11: 101,
+    12: 109,
+    13: 117,
+    14: 125,
+    15: 133,
 }
 
 
@@ -55,9 +77,9 @@ class ModuleCoord:
 
 class ModuleType(IntEnum):
     """模块类型。"""
-    FINDER = 0       # Finder Pattern
-    SEPARATOR = 1    # Separator（白色边框）
-    TIMING = 2       # Timing Pattern
+    FINDER = 0       # 标准 Finder Pattern（TL/TR/BL）
+    L_CORNER = 6     # L 型角标（BR）
+    SEPARATOR = 1    # Separator（白色边框，仅标准 Finder 周围）
     FORMAT_INFO = 3  # Format Info
     DATA = 4         # 数据模块
     QUIET_ZONE = 5   # Quiet Zone（网格外）
@@ -85,7 +107,6 @@ class Grid:
         self._structural_coords: Set[Tuple[int, int]] = set()
         self._finder_coords: Set[Tuple[int, int]] = set()
         self._separator_coords: Set[Tuple[int, int]] = set()
-        self._timing_coords: Set[Tuple[int, int]] = set()
         self._format_info_coords: Set[Tuple[int, int]] = set()
 
         self._build_structural_areas()
@@ -96,7 +117,7 @@ class Grid:
     def _build_structural_areas(self) -> None:
         N = self.N
 
-        # --- Finder Patterns (3 个角) ---
+        # --- 标准 Finder Patterns (3 个角: TL, TR, BL) ---
         finder_positions = [
             (0, 0),           # 左上
             (N - 7, 0),       # 右上
@@ -109,10 +130,8 @@ class Grid:
                     self._finder_coords.add(coord)
                     self._structural_coords.add(coord)
 
-        # --- Separators (finder 周围 1 模块白色边框) ---
+        # --- Separators (标准 Finder 周围 1 模块白色边框, 3 组) ---
         for fc, fr in finder_positions:
-            # finder 占据 [fc, fc+6] × [fr, fr+6]
-            # separator 是周围一圈
             for dr in range(-1, 8):
                 for dc in range(-1, 8):
                     c, r = fc + dc, fr + dr
@@ -122,19 +141,15 @@ class Grid:
                             self._separator_coords.add(coord)
                             self._structural_coords.add(coord)
 
-        # --- Timing Patterns ---
-        # 水平: row=6, col=8 到 col=N-9
-        for c in range(8, N - 8):
-            coord = (c, 6)
-            if coord not in self._structural_coords:
-                self._timing_coords.add(coord)
-                self._structural_coords.add(coord)
-        # 垂直: col=6, row=8 到 row=N-9
-        for r in range(8, N - 8):
-            coord = (6, r)
-            if coord not in self._structural_coords:
-                self._timing_coords.add(coord)
-                self._structural_coords.add(coord)
+        # --- L 型角标 (BR, 5 个黑色模块) ---
+        # 右列: col=N-1, row=N-3..N-1
+        # 底行: col=N-3..N-1, row=N-1（拐角重叠）
+        self._l_corner_coords: Set[Tuple[int, int]] = set()
+        for i in range(3):
+            self._l_corner_coords.add((N - 1, N - 3 + i))  # 右列
+            self._l_corner_coords.add((N - 3 + i, N - 1))   # 底行
+        for coord in self._l_corner_coords:
+            self._structural_coords.add(coord)
 
         # --- Format Info ---
         # 第一份（左上 finder 周围，14 模块）
@@ -173,10 +188,10 @@ class Grid:
         coord = (col, row)
         if coord in self._finder_coords:
             return ModuleType.FINDER
+        if coord in self._l_corner_coords:
+            return ModuleType.L_CORNER
         if coord in self._separator_coords:
             return ModuleType.SEPARATOR
-        if coord in self._timing_coords:
-            return ModuleType.TIMING
         if coord in self._format_info_coords:
             return ModuleType.FORMAT_INFO
         return ModuleType.DATA
@@ -203,10 +218,12 @@ class Grid:
 
     def get_finder_module_value(self, col: int, row: int) -> Optional[int]:
         """
-        获取 Finder Pattern 区域的黑白值（1=黑, 0=白）。
-        若不在任何 finder 区域内，返回 None。
+        获取结构区域模块的黑白值（1=黑, 0=白）。
+        包括标准 Finder Pattern 和 L 型角标。
+        若不在任何结构区域内，返回 None。
         """
         N = self.N
+        # 标准 Finder (TL, TR, BL)
         finder_positions = [
             (0, 0),           # 左上
             (N - 7, 0),       # 右上
@@ -215,18 +232,9 @@ class Grid:
         for fc, fr in finder_positions:
             if fc <= col < fc + 7 and fr <= row < fr + 7:
                 return FINDER_PATTERN[row - fr][col - fc]
-        return None
-
-    def get_timing_module_value(self, col: int, row: int) -> Optional[int]:
-        """
-        获取 Timing Pattern 区域的黑白值（1=黑, 0=白）。
-        Timing 起始于 col=8 / row=8，交替黑白，起始为黑（col=8 → 黑）。
-        """
-        if (col, row) in self._timing_coords:
-            if row == 6:
-                return (col - 8) % 2  # col=8 → 0(白)... 实际 QR timing 从 col=6 开始
-            if col == 6:
-                return (row - 8) % 2
+        # L 型角标 (BR): 全部为黑色
+        if (col, row) in self._l_corner_coords:
+            return 1
         return None
 
     @property

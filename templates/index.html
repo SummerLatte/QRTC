@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>QRTC 符号层测试</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --card: #16213e;
+  --accent: #0f3460;
+  --primary: #4e9eff;
+  --success: #4ade80;
+  --warn: #fbbf24;
+  --error: #f87171;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --border: #2a2a4a;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 12px;
+}
+h1 {
+  font-size: 1.3rem;
+  text-align: center;
+  margin-bottom: 16px;
+  color: var(--primary);
+}
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+}
+.card-title {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.card-title::before {
+  content: '';
+  width: 3px;
+  height: 16px;
+  background: var(--primary);
+  border-radius: 2px;
+}
+/* 配置区 */
+.config-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.config-item {
+  flex: 1;
+  min-width: 70px;
+}
+.config-item label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.config-item select {
+  width: 100%;
+  padding: 8px;
+  background: var(--accent);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+/* 按钮 */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.btn:active { opacity: 0.7; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-success { background: var(--success); color: #1a1a2e; }
+.btn-warn { background: var(--warn); color: #1a1a2e; }
+.btn-error { background: var(--error); color: #fff; }
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+/* 图像显示 */
+#testImageContainer {
+  text-align: center;
+  margin-top: 12px;
+}
+#testImage {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  image-rendering: pixelated;
+}
+.image-info {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 8px;
+}
+/* 摄像头 */
+#cameraContainer {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3/4;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+#video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+#captureCanvas { display: none; }
+.camera-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 20px;
+}
+/* 结果 */
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.result-row:last-child { border-bottom: none; }
+.result-label { color: var(--text-dim); }
+.result-value { font-weight: 600; }
+.result-value.ok { color: var(--success); }
+.result-value.warn { color: var(--warn); }
+.result-value.err { color: var(--error); }
+/* 捕获预览 */
+#capturePreview {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+/* 状态指示 */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.status-badge.idle { background: var(--border); color: var(--text-dim); }
+.status-badge.active { background: var(--success); color: #1a1a2e; }
+/* 响应式 */
+@media (min-width: 768px) {
+  body { max-width: 900px; margin: 0 auto; padding: 24px; }
+  .two-col { display: flex; gap: 16px; }
+  .two-col > * { flex: 1; }
+}
+</style>
+</head>
+<body>
+
+<h1>QRTC 符号层实地测试</h1>
+
+<!-- 配置 + 生成 -->
+<div class="card">
+  <div class="card-title">测试配置 &amp; 生成码图</div>
+  <div class="config-row">
+    <div class="config-item">
+      <label>等级</label>
+      <select id="cfgLevel">
+        <option value="1">L1 (21×21)</option>
+        <option value="2">L2 (29×29)</option>
+        <option value="3">L3 (37×37)</option>
+        <option value="4">L4 (45×45)</option>
+      </select>
+    </div>
+    <div class="config-item">
+      <label>颜色档</label>
+      <select id="cfgColors">
+        <option value="2">2色</option>
+        <option value="4" selected>4色</option>
+        <option value="8">8色</option>
+      </select>
+    </div>
+    <div class="config-item">
+      <label>图形档</label>
+      <select id="cfgShapes">
+        <option value="2">2图形</option>
+        <option value="4" selected>4图形</option>
+      </select>
+    </div>
+    <div class="config-item">
+      <label>模块大小</label>
+      <select id="cfgModuleSize">
+        <option value="8">8px</option>
+        <option value="10">10px</option>
+        <option value="12" selected>12px</option>
+        <option value="16">16px</option>
+        <option value="20">20px</option>
+      </select>
+    </div>
+  </div>
+  <button class="btn btn-primary" id="btnGenerate" onclick="generateImage()">
+    生成测试码图
+  </button>
+  <div id="testImageContainer">
+    <img id="testImage" style="display:none" />
+    <div class="image-info" id="imageInfo"></div>
+  </div>
+</div>
+
+<!-- 摄像头 -->
+<div class="card">
+  <div class="card-title">
+    摄像头拍摄
+    <span class="status-badge idle" id="cameraStatus">未开启</span>
+  </div>
+  <div id="cameraContainer">
+    <div class="camera-placeholder" id="cameraPlaceholder">
+      点击下方按钮开启摄像头<br>对准屏幕上的码图拍摄
+    </div>
+    <video id="video" autoplay playsinline style="display:none"></video>
+    <canvas id="captureCanvas"></canvas>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-outline" id="btnCamera" style="flex:1" onclick="toggleCamera()">
+      开启摄像头
+    </button>
+    <button class="btn btn-success" id="btnCapture" style="flex:1" disabled onclick="captureAndDecode()">
+      拍摄并解码
+    </button>
+  </div>
+  <img id="capturePreview" style="display:none" />
+</div>
+
+<!-- 结果 -->
+<div class="card" id="resultCard" style="display:none">
+  <div class="card-title">解码结果</div>
+  <div id="resultContent"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let stream = null;
+let hasTest = false;
+
+// ---- 生成 ----
+async function generateImage() {
+  const btn = $('btnGenerate');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+  try {
+    const params = new URLSearchParams({
+      level: $('cfgLevel').value,
+      n_colors: $('cfgColors').value,
+      n_shapes: $('cfgShapes').value,
+      module_size: $('cfgModuleSize').value,
+    });
+    const res = await fetch('/api/generate?' + params);
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+
+    hasTest = true;
+    const img = $('testImage');
+    img.src = 'data:image/png;base64,' + data.image;
+    img.style.display = 'inline-block';
+    $('imageInfo').innerHTML =
+      `等级${data.level} · ${data.n_colors}色+${data.n_shapes}图形 · ` +
+      `模块${data.module_size}px · 图像${data.image_size[0]}×${data.image_size[1]} · ` +
+      `S=${data.S} M=${data.M} · seed=${data.seed}`;
+  } catch (e) {
+    alert('生成失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '生成测试码图';
+  }
+}
+
+// ---- 摄像头 ----
+async function toggleCamera() {
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    $('video').style.display = 'none';
+    $('cameraPlaceholder').style.display = 'flex';
+    $('btnCamera').textContent = '开启摄像头';
+    $('btnCapture').disabled = true;
+    $('cameraStatus').textContent = '未开启';
+    $('cameraStatus').className = 'status-badge idle';
+    return;
+  }
+
+  // 检查 mediaDevices API 是否可用
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    const isHTTPS = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!isHTTPS) {
+      alert(
+        '摄像头不可用：当前为 HTTP 连接\n\n' +
+        'iOS Safari 要求 HTTPS 才能使用摄像头。\n' +
+        '请用 HTTPS 地址访问：\n' +
+        'https://' + location.hostname + ':' + location.port + '\n\n' +
+        '首次打开会有证书警告，点击「显示详情」→「访问此网站」→「访问」即可。'
+      );
+    } else {
+      alert('摄像头不可用：浏览器不支持 mediaDevices API\n请使用 iOS 11+ 或现代浏览器');
+    }
+    return;
+  }
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+    const video = $('video');
+    video.srcObject = stream;
+    video.style.display = 'block';
+    $('cameraPlaceholder').style.display = 'none';
+    $('btnCamera').textContent = '关闭摄像头';
+    $('btnCapture').disabled = false;
+    $('cameraStatus').textContent = '已开启';
+    $('cameraStatus').className = 'status-badge active';
+  } catch (e) {
+    alert('摄像头开启失败: ' + e.message + '\n\n请确保已授权摄像头权限');
+  }
+}
+
+// ---- 拍摄并解码 ----
+async function captureAndDecode() {
+  const btn = $('btnCapture');
+  btn.disabled = true;
+  btn.textContent = '拍摄中...';
+
+  const video = $('video');
+  const canvas = $('captureCanvas');
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+
+  // 显示预览
+  const preview = $('capturePreview');
+  preview.src = canvas.toDataURL('image/jpeg', 0.9);
+  preview.style.display = 'block';
+
+  btn.textContent = '解码中...';
+
+  try {
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const res = await fetch('/api/decode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imgData }),
+    });
+    const data = await res.json();
+    showResult(data);
+  } catch (e) {
+    showResult({ success: false, error: e.message });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '拍摄并解码';
+  }
+}
+
+// ---- 结果展示 ----
+function showResult(data) {
+  const card = $('resultCard');
+  const content = $('resultContent');
+  card.style.display = 'block';
+
+  if (!data.success) {
+    let html = `
+      <div class="result-row">
+        <span class="result-label">状态</span>
+        <span class="result-value err">解码失败</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">错误</span>
+        <span class="result-value err">${data.error}</span>
+      </div>`;
+    if (data.traceback) {
+      html += `<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--text-dim);font-size:0.8rem">详细堆栈</summary><pre style="margin-top:4px;font-size:0.7rem;white-space:pre-wrap;color:var(--error)">${data.traceback}</pre></details>`;
+    }
+    if (data.debug_raw) {
+      html += `
+      <div style="margin-top:12px">
+        <div class="image-info" style="margin-bottom:4px">调试图像（原始回传）</div>
+        <img src="/api/debug/${data.debug_raw}" style="max-width:100%;border-radius:8px;border:1px solid var(--border)" />
+      </div>`;
+    }
+    content.innerHTML = html;
+    return;
+  }
+
+  const rate = (data.error_rate * 100).toFixed(1);
+  const cls = data.mismatches === 0 ? 'ok' : data.error_rate < 0.1 ? 'warn' : 'err';
+  const status = data.mismatches === 0 ? '完美匹配' : data.error_rate < 0.1 ? '基本正确' : '错误较多';
+
+  let html = `
+    <div class="result-row">
+      <span class="result-label">状态</span>
+      <span class="result-value ${cls}">${status}</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">匹配</span>
+      <span class="result-value ${cls}">${data.total - data.mismatches}/${data.total}</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">错误率</span>
+      <span class="result-value ${cls}">${rate}%</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">不匹配数</span>
+      <span class="result-value">${data.mismatches}</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">平均置信度</span>
+      <span class="result-value">${(data.avg_confidence * 100).toFixed(1)}%</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">低置信度模块</span>
+      <span class="result-value">${data.low_confidence_count}</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">解码耗时</span>
+      <span class="result-value">${data.decode_time_ms}ms</span>
+    </div>
+    <div class="result-row">
+      <span class="result-label">Format Info</span>
+      <span class="result-value">color=${data.format_info.color_level_code} shape=${data.format_info.shape_level_code}</span>
+    </div>`;
+
+  // 调试图像
+  if (data.debug_raw) {
+    html += `
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <div class="image-info" style="margin-bottom:8px;color:var(--text)">调试图像</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div>
+          <div class="image-info" style="margin-bottom:4px">① 原始回传</div>
+          <img src="/api/debug/${data.debug_raw}" style="max-width:100%;border-radius:8px;border:1px solid var(--border)" />
+        </div>
+        <div>
+          <div class="image-info" style="margin-bottom:4px">② 透视校正后</div>
+          <img src="/api/debug/${data.debug_warped}" style="max-width:100%;border-radius:8px;border:1px solid var(--border);image-rendering:pixelated" />
+        </div>
+        <div>
+          <div class="image-info" style="margin-bottom:4px">③ 不匹配标注（红=错误 黄=低置信度）</div>
+          <img src="/api/debug/${data.debug_annotate}" style="max-width:100%;border-radius:8px;border:1px solid var(--border);image-rendering:pixelated" />
+        </div>
+      </div>
+    </div>`;
+  }
+
+  content.innerHTML = html;
+}
+
+// ---- 初始化：检查当前测试状态 ----
+(async function() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    if (data.has_test) {
+      hasTest = true;
+      const img = $('testImage');
+      img.src = '/api/image.png?' + Date.now();
+      img.style.display = 'inline-block';
+      $('imageInfo').innerHTML =
+        `等级${data.level} · S=${data.S} M=${data.M} · ` +
+        `已有测试图像（刷新页面时保留）`;
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

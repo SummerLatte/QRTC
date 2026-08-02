@@ -13,7 +13,7 @@
 - colors: 颜色定义、颜色档位、颜色对
 - shapes: 图形定义、图形档位
 - symbol: 符号编码/解码（颜色对 + 图形 → 符号值）
-- grid: 网格、结构区域（Finder/Separator/Timing/Format Info）
+- grid: 网格、结构区域（Finder/Separator/Format Info）
 - format_info: BCH(14,4) 编解码
 - module: 模块类型定义
 - encoder: 符号块 → 帧模块描述矩阵

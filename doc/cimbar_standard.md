@@ -2,7 +2,7 @@
 
 ## 设计目标
 
-屏幕到屏幕的单向高速数据传输。借鉴 QR 码核心机制（finder pattern、timing pattern、format info、Reed-Solomon），用**颜色 + 图形**双重编码提升数据密度。
+屏幕到屏幕的单向高速数据传输。借鉴 QR 码核心机制（finder pattern、format info、Reed-Solomon），用**颜色 + 图形**双重编码提升数据密度。
 
 ## 核心设计决策
 
@@ -11,8 +11,7 @@
 | 编码方式 | 颜色对 + 图形 = 符号 | 颜色数和图形数均可变，符号到 bits 的映射由数据层决定 |
 | 颜色数 | 可变：2 / 4 / 8 色（JAB Code 配色） | 按屏幕色彩还原能力选择 |
 | 图形数 | 可变：2 / 4 / 8 / 16 种 | 按屏幕清晰度选择 |
-| 定位 | QR 标准 finder pattern (3 个角) | 直接复用 OpenCV QR 检测器 |
-| 网格对齐 | QR 标准 timing pattern | 模块级对齐 |
+| 定位 | QR 标准 finder pattern (4 个角) | 直接复用 OpenCV QR 检测器 |
 | 网格尺寸 | 4 个等级：21×21 / 29×29 / 37×37 / 45×45（每级 +8 模块，不含 Quiet Zone） | 以模块数定义，与像素无关，finder 测量推算等级 |
 | 帧元信息 | Format Info (颜色档/图形档) | 等级由 finder 测量决定，Format Info 仅存颜色和图形档位 |
 | 帧格式 | 单一帧格式，无 Header/Data 区分 | total_length 每帧携带，收到任意一帧即可引导解码 |
@@ -38,7 +37,7 @@ Cimbar 采用 3 层架构，每层向下依赖、向上提供服务，上层不�
 
 - **模块（Module）**是 Cimbar 的最小单元，为正方形区域，和像素无关，分为两类：
 
-**辅助模块**：纯黑或纯白，不承载数据，用于结构定位（Finder、Separator、Timing、Quiet Zone）
+**辅助模块**：纯黑或纯白，不承载数据，用于结构定位（Finder、Separator、Quiet Zone）
 
 **数据模块**：由两种对等颜色 + 一种图形组成，承载一个符号（symbol）
 - 两种颜色从颜色集合中选取，无主次之分，颜色 A ≠ 颜色 B
@@ -112,13 +111,9 @@ Cimbar 采用 3 层架构，每层向下依赖、向上提供服务，上层不�
 
 网格内模块分为结构区和数据区。结构区不承载符号。
 
-**Finder Pattern**：标准 QR finder pattern，7×7 模块，位于 3 个角（左上、右上、左下）。用于定位和等级推算。
+**Finder Pattern**：标准 QR finder pattern，7×7 模块，位于 4 个角（左上、右上、左下、右下）。用于定位和等级推算。
 
-**Separator**：finder pattern 周围 1 模块宽白色边框。
-
-**Timing Pattern**：交替黑白模块，用于模块级对齐。
-- 水平：row=6, col=8 到 col=N-9
-- 垂直：col=6, row=8 到 row=N-9
+**Separator**：每个 finder pattern 周围 1 模块宽白色边框。
 
 **Quiet Zone**：网格四周的空白边距，不承载模块。
 
@@ -218,16 +213,12 @@ K = ceil(total_length / chunk_size)
 
 ### 4.1 Finder 检测
 
-OpenCV `QRCodeDetector.detect()` 检测 3 个 finder pattern，获得角点坐标。
+OpenCV `QRCodeDetector.detect()` 检测 4 个 finder pattern，获得角点坐标。
 
 ### 4.2 透视校正
 
-3 个 finder 角点 + 推算第 4 角 → 透视变换 → 校正为标准矩形。
+4 个 finder 角点 → 透视变换 → 校正为标准矩形。
 
 ### 4.3 模块对齐
 
-利用 timing pattern 精确确定模块边界：
-1. 在 timing pattern 行/列上采样
-2. 检测黑白交替周期
-3. 计算实际模块大小和偏移
-4. 调整所有模块采样位置
+利用 4 个 finder pattern 的已知位置和间距，精确推算模块大小和偏移，调整所有模块采样位置。
